@@ -1,0 +1,38 @@
+# Maven
+target/
+*.jar
+*.war
+!ci.txt
+
+# SQLite
+*.db
+
+# Node / Vue
+node_modules/
+dist/
+.vite/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Env
+.env
+.env.local
+
+# Temp
+*.tmp
+*.swp
+*.bak

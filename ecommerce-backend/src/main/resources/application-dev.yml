@@ -1,0 +1,28 @@
+# ============================================================
+# 开发环境配置 - SQLite
+# ============================================================
+spring:
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: org.sqlite.JDBC
+    url: jdbc:sqlite:./data/ecommerce.db
+    username:
+    password:
+    druid:
+      initial-size: 1
+      min-idle: 1
+      max-active: 5
+      test-while-idle: true
+      validation-query: SELECT 1
+
+# MyBatis SQLite 方言适配
+mybatis:
+  configuration:
+    database-id: sqlite
+  type-handlers-package: com.ecommerce.common
+
+# 日志级别
+logging:
+  level:
+    com.ecommerce: DEBUG
+    org.apache.shiro: DEBUG
