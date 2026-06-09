@@ -15,18 +15,48 @@
     <div v-else-if="product.id" class="card">
       <div class="card-body">
         <div class="row">
-          <div class="col-md-5">
+          <!-- 商品图片 -->
+          <div class="col-md-5 position-relative">
             <img
               :src="product.imageUrl || 'https://via.placeholder.com/400x400?text=No+Image'"
               class="img-fluid rounded"
               :alt="product.name"
             />
           </div>
+
+          <!-- 商品信息 -->
           <div class="col-md-7">
             <h3>{{ product.name }}</h3>
-            <div class="price my-3" style="font-size: 2rem; color: #e74c3c;">
-              ¥{{ product.price }}
+
+            <!-- 子组件1: 促销标签 -->
+            <div class="mb-2" v-if="promo">
+              <PromoTag
+                v-for="tag in promo.tags"
+                :key="tag.type"
+                :type="tag.type"
+                :label="tag.label"
+                :color="tag.color"
+              />
             </div>
+
+            <div class="price my-3" style="font-size: 2rem; color: #e74c3c;">
+              <span v-if="promo?.originalPrice" class="mr-2">
+                <s class="text-muted" style="font-size: 1rem;">
+                  &yen;{{ promo.originalPrice }}
+                </s>
+              </span>
+              &yen;{{ product.price }}
+            </div>
+
+            <!-- 子组件2: 倒计时 -->
+            <div class="mb-3" v-if="promo?.endTime">
+              <CountdownTimer
+                :end-time="promo.endTime"
+                :title="promo.countdownTitle || '限时优惠'"
+                @expired="onPromoExpired"
+              />
+            </div>
+
             <hr />
             <p class="text-muted">{{ product.description || '暂无描述' }}</p>
             <div class="mt-3">
@@ -68,11 +98,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { getProductDetail } from '../api/product'
 import { addToCart } from '../api/cart'
+import PromoTag from '../components/PromoTag.vue'
+import CountdownTimer from '../components/CountdownTimer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -81,6 +113,29 @@ const userStore = useUserStore()
 const product = ref({})
 const loading = ref(true)
 const qty = ref(1)
+const promoExpired = ref(false)
+
+// 父组件计算的促销数据，传给子组件
+const promo = computed(() => {
+  if (promoExpired.value) return null
+  const p = product.value
+  if (!p || !p.promo) return null
+
+  const now = Date.now()
+  if (p.promo.endTime && new Date(p.promo.endTime).getTime() < now) {
+    return null
+  }
+  return {
+    tags: p.promo.tags || [],
+    endTime: p.promo.endTime || null,
+    countdownTitle: p.promo.countdownTitle || '限时优惠',
+    originalPrice: p.promo.originalPrice || null
+  }
+})
+
+function onPromoExpired() {
+  promoExpired.value = true
+}
 
 async function fetchProduct() {
   loading.value = true

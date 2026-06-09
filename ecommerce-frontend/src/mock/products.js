@@ -92,7 +92,41 @@ export async function mockGetProducts(params = {}) {
 }
 
 /**
- * Mock 商品详情
+ * 为商品附加促销信息（父组件通过 props 传给 PromoTag / CountdownTimer）
+ */
+const PROMO_CONFIG = {
+  1: {
+    tags: [{ type: 'flash_sale', label: '限时秒杀' }, { type: 'free_shipping', label: '包邮' }],
+    endTime: Date.now() + 2 * 3600 * 1000,  // 2小时后结束
+    countdownTitle: '秒杀倒计时',
+    originalPrice: 8999
+  },
+  2: {
+    tags: [{ type: 'discount', label: '满减优惠' }, { type: 'limited', label: '限量发售' }],
+    endTime: Date.now() + 24 * 3600 * 1000, // 24小时后
+    countdownTitle: '优惠截止',
+    originalPrice: 7999
+  },
+  3: {
+    tags: [{ type: 'new_arrival', label: '新品上市' }, { type: 'free_shipping', label: '包邮' }],
+    originalPrice: 16999
+  },
+  6: {
+    tags: [{ type: 'discount', label: '满200减30' }],
+    endTime: Date.now() + 5 * 3600 * 1000,
+    countdownTitle: '活动剩余',
+    originalPrice: 799
+  },
+  7: {
+    tags: [{ type: 'flash_sale', label: '限时特价' }],
+    endTime: Date.now() + 3600 * 1000,       // 1小时后
+    countdownTitle: '特价倒计时',
+    originalPrice: 599
+  }
+}
+
+/**
+ * Mock 商品详情（含促销信息）
  */
 export async function mockGetProduct(id) {
   await new Promise(resolve => setTimeout(resolve, 200))
@@ -100,7 +134,9 @@ export async function mockGetProduct(id) {
   if (!product) {
     return { code: 404, message: '商品不存在', data: null }
   }
-  return { code: 200, message: 'success', data: product }
+  // 父组件传递的促销数据，子组件通过 props 接收
+  const promo = PROMO_CONFIG[id] || null
+  return { code: 200, message: 'success', data: { ...product, promo } }
 }
 
 /**
