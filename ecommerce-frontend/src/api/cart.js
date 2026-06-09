@@ -1,21 +1,21 @@
-import api from './index'
+import { get, post, put, del } from '../utils/request'
 
 export function getCart() {
-  return api.get('/cart')
+  return get('/cart')
 }
 
 export function addToCart(productId, quantity = 1) {
-  return api.post('/cart/add', { productId, quantity })
+  return post('/cart/add', { productId, quantity })
 }
 
 export function updateCartQuantity(productId, quantity) {
-  return api.put('/cart/update', { productId, quantity })
+  return put('/cart/update', { productId, quantity })
 }
 
 export function removeFromCart(productId) {
-  return api.delete(`/cart/remove/${productId}`)
+  return del(`/cart/remove/${productId}`)
 }
 
 export function clearCart() {
-  return api.delete('/cart/clear')
+  return del('/cart/clear')
 }

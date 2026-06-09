@@ -1,9 +1,9 @@
-import api from './index'
+import { post } from '../utils/request'
 
 export function login(username, password) {
-  return api.post('/auth/login', { username, password })
+  return post('/auth/login', { username, password })
 }
 
 export function register(data) {
-  return api.post('/auth/register', data)
+  return post('/auth/register', data)
 }

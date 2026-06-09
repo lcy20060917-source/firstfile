@@ -1,9 +1,10 @@
-import api from './index'
+import { get } from '../utils/request'
+import { mockGetProducts, mockGetProduct } from '../mock/products'
 
 export function getProducts(params = {}) {
-  return api.get('/products', { params })
+  return get('/products', params, mockGetProducts)
 }
 
 export function getProductDetail(id) {
-  return api.get(`/products/${id}`)
+  return get(`/products/${id}`, {}, (p) => mockGetProduct(id))
 }

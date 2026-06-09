@@ -1,17 +1,17 @@
-import api from './index'
+import { get, post, put } from '../utils/request'
 
 export function createOrder(data) {
-  return api.post('/orders', data)
+  return post('/orders', data)
 }
 
 export function getOrders(params = {}) {
-  return api.get('/orders', { params })
+  return get('/orders', params)
 }
 
 export function getOrderDetail(id) {
-  return api.get(`/orders/${id}`)
+  return get(`/orders/${id}`)
 }
 
 export function cancelOrder(id) {
-  return api.put(`/orders/${id}/cancel`)
+  return put(`/orders/${id}/cancel`)
 }
