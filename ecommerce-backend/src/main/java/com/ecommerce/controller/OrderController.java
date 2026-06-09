@@ -1,18 +1,17 @@
 package com.ecommerce.controller;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.ecommerce.common.Constants;
 import com.ecommerce.common.Result;
-import com.ecommerce.domain.dto.OrderRequest;
-import com.ecommerce.domain.dto.OrderVO;
+import com.ecommerce.dto.OrderRequest;
+import com.ecommerce.dto.OrderVO;
 import com.ecommerce.service.OrderService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.validation.Valid;
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -20,7 +19,6 @@ import java.util.Map;
 public class OrderController {
 
     private static final Logger log = LoggerFactory.getLogger(OrderController.class);
-
     private final OrderService orderService;
 
     public OrderController(OrderService orderService) {
@@ -28,60 +26,39 @@ public class OrderController {
     }
 
     @PostMapping
-    public Result<OrderVO> createOrder(@Valid @RequestBody OrderRequest orderRequest,
-                                        HttpServletRequest request) {
-        Long userId = getCurrentUserId(request);
-        log.info("创建订单: userId={}, receiverName={}", userId, orderRequest.getReceiverName());
-        OrderVO order = orderService.createOrder(userId, orderRequest);
-        return Result.success(order);
+    public Result<OrderVO> create(@Valid @RequestBody OrderRequest r, HttpServletRequest req) {
+        Long uid = getUserId(req);
+        log.info("下单: userId={}", uid);
+        return Result.success(orderService.createOrder(uid, r));
     }
 
     @GetMapping
-    public Result<Map<String, Object>> listOrders(
+    public Result<Map<String, Object>> list(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
-            HttpServletRequest request) {
-        Long userId = getCurrentUserId(request);
-        log.debug("查询订单列表: userId={}, page={}, size={}", userId, page, size);
-
-        List<OrderVO> orders = orderService.listOrders(userId, page, size);
-        int total = orderService.countOrders(userId);
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("content", orders);
-        data.put("totalElements", total);
-        data.put("totalPages", (int) Math.ceil((double) total / size));
-        data.put("size", size);
-        data.put("number", page);
-
-        return Result.success(data);
+            HttpServletRequest req) {
+        Long uid = getUserId(req);
+        IPage<OrderVO> p = orderService.listOrders(uid, page, size);
+        return Result.success(Map.of("content", p.getRecords(), "total", p.getTotal(),
+                "pages", p.getPages(), "current", p.getCurrent()));
     }
 
     @GetMapping("/{id}")
-    public Result<OrderVO> getOrderDetail(@PathVariable Long id, HttpServletRequest request) {
-        Long userId = getCurrentUserId(request);
-        log.debug("查询订单详情: userId={}, orderId={}", userId, id);
-        OrderVO order = orderService.getOrderDetail(id);
-        if (!order.getUserId().equals(userId)) {
-            return Result.error(403, "无权查看此订单");
-        }
-
-        return Result.success(order);
+    public Result<OrderVO> detail(@PathVariable Long id, HttpServletRequest req) {
+        OrderVO vo = orderService.getOrderDetail(id);
+        if (!vo.getUserId().equals(getUserId(req))) return Result.error(403, "无权查看");
+        return Result.success(vo);
     }
 
     @PutMapping("/{id}/cancel")
-    public Result<Void> cancelOrder(@PathVariable Long id, HttpServletRequest request) {
-        Long userId = getCurrentUserId(request);
-        log.info("取消订单: userId={}, orderId={}", userId, id);
-        orderService.cancelOrder(userId, id);
-        return Result.success();
+    public Result<Void> cancel(@PathVariable Long id, HttpServletRequest req) {
+        orderService.cancelOrder(getUserId(req), id);
+        return Result.success(null);
     }
 
-    private Long getCurrentUserId(HttpServletRequest request) {
-        Long userId = (Long) request.getAttribute(Constants.CURRENT_USER_ATTR);
-        if (userId == null) {
-            throw new RuntimeException("未登录或 Token 已过期");
-        }
-        return userId;
+    private Long getUserId(HttpServletRequest req) {
+        Long uid = (Long) req.getAttribute(Constants.CURRENT_USER_ATTR);
+        if (uid == null) throw new RuntimeException("未登录");
+        return uid;
     }
 }

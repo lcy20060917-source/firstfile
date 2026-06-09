@@ -2,22 +2,20 @@ package com.ecommerce.controller;
 
 import com.ecommerce.common.Constants;
 import com.ecommerce.common.Result;
-import com.ecommerce.domain.dto.CartRequest;
-import com.ecommerce.domain.dto.CartVO;
+import com.ecommerce.dto.CartRequest;
+import com.ecommerce.dto.CartVO;
 import com.ecommerce.service.CartService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
-
-import javax.servlet.http.HttpServletRequest;
-import javax.validation.Valid;
 
 @RestController
 @RequestMapping("/api/cart")
 public class CartController {
 
     private static final Logger log = LoggerFactory.getLogger(CartController.class);
-
     private final CartService cartService;
 
     public CartController(CartService cartService) {
@@ -25,53 +23,38 @@ public class CartController {
     }
 
     @GetMapping
-    public Result<CartVO> viewCart(HttpServletRequest request) {
-        Long userId = getCurrentUserId(request);
-        log.debug("查看购物车: userId={}", userId);
-        CartVO cart = cartService.viewCart(userId);
-        return Result.success(cart);
+    public Result<CartVO> view(HttpServletRequest req) {
+        return Result.success(cartService.viewCart(getUserId(req)));
     }
 
     @PostMapping("/add")
-    public Result<Void> addToCart(@Valid @RequestBody CartRequest cartRequest, HttpServletRequest request) {
-        Long userId = getCurrentUserId(request);
-        log.info("加入购物车: userId={}, productId={}, quantity={}",
-                userId, cartRequest.getProductId(), cartRequest.getQuantity());
-        cartService.addToCart(userId, cartRequest.getProductId(),
-                cartRequest.getQuantity() != null ? cartRequest.getQuantity() : 1);
-        return Result.success();
+    public Result<Void> add(@Valid @RequestBody CartRequest r, HttpServletRequest req) {
+        cartService.addToCart(getUserId(req), r.getProductId(),
+                r.getQuantity() != null ? r.getQuantity() : 1);
+        return Result.success(null);
     }
 
     @PutMapping("/update")
-    public Result<Void> updateQuantity(@Valid @RequestBody CartRequest cartRequest, HttpServletRequest request) {
-        Long userId = getCurrentUserId(request);
-        log.info("更新购物车: userId={}, productId={}, quantity={}",
-                userId, cartRequest.getProductId(), cartRequest.getQuantity());
-        cartService.updateQuantity(userId, cartRequest.getProductId(), cartRequest.getQuantity());
-        return Result.success();
+    public Result<Void> update(@Valid @RequestBody CartRequest r, HttpServletRequest req) {
+        cartService.updateQuantity(getUserId(req), r.getProductId(), r.getQuantity());
+        return Result.success(null);
     }
 
     @DeleteMapping("/remove/{productId}")
-    public Result<Void> removeFromCart(@PathVariable Long productId, HttpServletRequest request) {
-        Long userId = getCurrentUserId(request);
-        log.info("移除购物车商品: userId={}, productId={}", userId, productId);
-        cartService.removeFromCart(userId, productId);
-        return Result.success();
+    public Result<Void> remove(@PathVariable Long productId, HttpServletRequest req) {
+        cartService.removeFromCart(getUserId(req), productId);
+        return Result.success(null);
     }
 
     @DeleteMapping("/clear")
-    public Result<Void> clearCart(HttpServletRequest request) {
-        Long userId = getCurrentUserId(request);
-        log.info("清空购物车: userId={}", userId);
-        cartService.clearCart(userId);
-        return Result.success();
+    public Result<Void> clear(HttpServletRequest req) {
+        cartService.clearCart(getUserId(req));
+        return Result.success(null);
     }
 
-    private Long getCurrentUserId(HttpServletRequest request) {
-        Long userId = (Long) request.getAttribute(Constants.CURRENT_USER_ATTR);
-        if (userId == null) {
-            throw new RuntimeException("未登录或 Token 已过期");
-        }
-        return userId;
+    private Long getUserId(HttpServletRequest req) {
+        Long uid = (Long) req.getAttribute(Constants.CURRENT_USER_ATTR);
+        if (uid == null) throw new RuntimeException("未登录");
+        return uid;
     }
 }

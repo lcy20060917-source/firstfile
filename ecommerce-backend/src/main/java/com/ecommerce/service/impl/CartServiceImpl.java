@@ -1,11 +1,12 @@
 package com.ecommerce.service.impl;
 
-import com.ecommerce.domain.CartItem;
-import com.ecommerce.domain.Product;
-import com.ecommerce.domain.dto.CartVO;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.ecommerce.dto.CartVO;
+import com.ecommerce.entity.CartItem;
+import com.ecommerce.entity.Product;
 import com.ecommerce.exception.BusinessException;
-import com.ecommerce.repository.CartRepository;
-import com.ecommerce.repository.ProductRepository;
+import com.ecommerce.mapper.CartMapper;
+import com.ecommerce.mapper.ProductMapper;
 import com.ecommerce.service.CartService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,104 +21,89 @@ import java.util.List;
 public class CartServiceImpl implements CartService {
 
     private static final Logger log = LoggerFactory.getLogger(CartServiceImpl.class);
+    private final CartMapper cartMapper;
+    private final ProductMapper productMapper;
 
-    private final CartRepository cartRepository;
-    private final ProductRepository productRepository;
-
-    public CartServiceImpl(CartRepository cartRepository, ProductRepository productRepository) {
-        this.cartRepository = cartRepository;
-        this.productRepository = productRepository;
+    public CartServiceImpl(CartMapper cartMapper, ProductMapper productMapper) {
+        this.cartMapper = cartMapper;
+        this.productMapper = productMapper;
     }
 
     @Override
     public CartVO viewCart(Long userId) {
-        List<CartItem> items = cartRepository.findByUserId(userId);
+        List<CartItem> items = cartMapper.selectList(
+                new LambdaQueryWrapper<CartItem>().eq(CartItem::getUserId, userId));
+        CartVO vo = new CartVO();
+        List<CartVO.CartItemVO> vos = new ArrayList<>();
+        BigDecimal total = BigDecimal.ZERO;
+        int count = 0;
 
-        CartVO cartVO = new CartVO();
-        List<CartVO.CartItemVO> itemVOs = new ArrayList<>();
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        int totalCount = 0;
-
-        for (CartItem item : items) {
-            CartVO.CartItemVO vo = new CartVO.CartItemVO();
-            vo.setId(item.getId());
-            vo.setProductId(item.getProductId());
-            vo.setProductName(item.getProductName());
-            vo.setProductPrice(item.getProductPrice());
-            vo.setProductImageUrl(item.getProductImageUrl());
-            vo.setQuantity(item.getQuantity());
-
-            BigDecimal subtotal = item.getProductPrice() != null
-                    ? item.getProductPrice().multiply(BigDecimal.valueOf(item.getQuantity()))
-                    : BigDecimal.ZERO;
-            vo.setSubtotal(subtotal);
-
-            totalAmount = totalAmount.add(subtotal);
-            totalCount += item.getQuantity();
-            itemVOs.add(vo);
+        for (CartItem ci : items) {
+            Product p = productMapper.selectById(ci.getProductId());
+            CartVO.CartItemVO iv = new CartVO.CartItemVO();
+            iv.setId(ci.getId());
+            iv.setProductId(ci.getProductId());
+            iv.setQuantity(ci.getQuantity());
+            if (p != null) {
+                iv.setProductName(p.getName());
+                iv.setProductPrice(p.getPrice());
+                iv.setProductImageUrl(p.getImageUrl());
+                BigDecimal sub = p.getPrice().multiply(BigDecimal.valueOf(ci.getQuantity()));
+                iv.setSubtotal(sub);
+                total = total.add(sub);
+            }
+            count += ci.getQuantity();
+            vos.add(iv);
         }
-
-        cartVO.setItems(itemVOs);
-        cartVO.setTotalAmount(totalAmount);
-        cartVO.setTotalCount(totalCount);
-
-        return cartVO;
+        vo.setItems(vos);
+        vo.setTotalAmount(total);
+        vo.setTotalCount(count);
+        return vo;
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional
     public void addToCart(Long userId, Long productId, Integer quantity) {
-        Product product = productRepository.findById(productId);
-        if (product == null) {
-            throw new BusinessException(404, "商品不存在");
+        Product p = productMapper.selectById(productId);
+        if (p == null || p.getStock() <= 0) {
+            throw new BusinessException(400, "商品不存在或库存不足");
         }
-        if (product.getStock() <= 0) {
-            throw new BusinessException(400, "商品库存不足");
-        }
-        CartItem existing = cartRepository.findByUserIdAndProductId(userId, productId);
-        if (existing != null) {
-            existing.setQuantity(existing.getQuantity() + quantity);
-            cartRepository.updateQuantity(existing);
-            log.info("更新购物车: userId={}, productId={}, quantity={}", userId, productId, existing.getQuantity());
+        CartItem exist = cartMapper.selectOne(new LambdaQueryWrapper<CartItem>()
+                .eq(CartItem::getUserId, userId).eq(CartItem::getProductId, productId));
+        if (exist != null) {
+            exist.setQuantity(exist.getQuantity() + quantity);
+            cartMapper.updateById(exist);
         } else {
-            CartItem cartItem = new CartItem();
-            cartItem.setUserId(userId);
-            cartItem.setProductId(productId);
-            cartItem.setQuantity(quantity);
-            cartRepository.insert(cartItem);
-            log.info("加入购物车: userId={}, productId={}, quantity={}", userId, productId, quantity);
+            CartItem ci = new CartItem();
+            ci.setUserId(userId);
+            ci.setProductId(productId);
+            ci.setQuantity(quantity);
+            cartMapper.insert(ci);
         }
+        log.info("加入购物车: userId={}, productId={}, qty={}", userId, productId, quantity);
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional
     public void updateQuantity(Long userId, Long productId, Integer quantity) {
-        if (quantity <= 0) {
-            removeFromCart(userId, productId);
-            return;
-        }
-
-        CartItem cartItem = cartRepository.findByUserIdAndProductId(userId, productId);
-        if (cartItem == null) {
-            throw new BusinessException(404, "购物车中无此商品");
-        }
-
-        cartItem.setQuantity(quantity);
-        cartRepository.updateQuantity(cartItem);
-        log.info("更新购物车数量: userId={}, productId={}, quantity={}", userId, productId, quantity);
+        if (quantity <= 0) { removeFromCart(userId, productId); return; }
+        CartItem ci = cartMapper.selectOne(new LambdaQueryWrapper<CartItem>()
+                .eq(CartItem::getUserId, userId).eq(CartItem::getProductId, productId));
+        if (ci == null) throw new BusinessException(404, "购物车中无此商品");
+        ci.setQuantity(quantity);
+        cartMapper.updateById(ci);
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional
     public void removeFromCart(Long userId, Long productId) {
-        cartRepository.deleteByUserIdAndProductId(userId, productId);
-        log.info("移除购物车商品: userId={}, productId={}", userId, productId);
+        cartMapper.delete(new LambdaQueryWrapper<CartItem>()
+                .eq(CartItem::getUserId, userId).eq(CartItem::getProductId, productId));
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional
     public void clearCart(Long userId) {
-        cartRepository.deleteByUserId(userId);
-        log.info("清空购物车: userId={}", userId);
+        cartMapper.delete(new LambdaQueryWrapper<CartItem>().eq(CartItem::getUserId, userId));
     }
 }

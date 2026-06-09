@@ -1,16 +1,19 @@
 package com.ecommerce.service.impl;
 
-import com.ecommerce.common.Constants;
-import com.ecommerce.domain.CartItem;
-import com.ecommerce.domain.Order;
-import com.ecommerce.domain.OrderItem;
-import com.ecommerce.domain.Product;
-import com.ecommerce.domain.dto.OrderRequest;
-import com.ecommerce.domain.dto.OrderVO;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.ecommerce.dto.OrderRequest;
+import com.ecommerce.dto.OrderVO;
+import com.ecommerce.entity.CartItem;
+import com.ecommerce.entity.Order;
+import com.ecommerce.entity.OrderItem;
+import com.ecommerce.entity.Product;
 import com.ecommerce.exception.BusinessException;
-import com.ecommerce.repository.CartRepository;
-import com.ecommerce.repository.OrderRepository;
-import com.ecommerce.repository.ProductRepository;
+import com.ecommerce.mapper.CartMapper;
+import com.ecommerce.mapper.OrderItemMapper;
+import com.ecommerce.mapper.OrderMapper;
+import com.ecommerce.mapper.ProductMapper;
 import com.ecommerce.service.OrderService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,166 +23,139 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class OrderServiceImpl implements OrderService {
 
     private static final Logger log = LoggerFactory.getLogger(OrderServiceImpl.class);
+    private final OrderMapper orderMapper;
+    private final OrderItemMapper orderItemMapper;
+    private final CartMapper cartMapper;
+    private final ProductMapper productMapper;
 
-    private final OrderRepository orderRepository;
-    private final CartRepository cartRepository;
-    private final ProductRepository productRepository;
-
-    public OrderServiceImpl(OrderRepository orderRepository,
-                            CartRepository cartRepository,
-                            ProductRepository productRepository) {
-        this.orderRepository = orderRepository;
-        this.cartRepository = cartRepository;
-        this.productRepository = productRepository;
+    public OrderServiceImpl(OrderMapper orderMapper, OrderItemMapper orderItemMapper,
+                            CartMapper cartMapper, ProductMapper productMapper) {
+        this.orderMapper = orderMapper;
+        this.orderItemMapper = orderItemMapper;
+        this.cartMapper = cartMapper;
+        this.productMapper = productMapper;
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional
     public OrderVO createOrder(Long userId, OrderRequest request) {
-        List<CartItem> cartItems = cartRepository.findByUserId(userId);
-        if (cartItems.isEmpty()) {
-            throw new BusinessException(400, "购物车为空，无法下单");
-        }
+        List<CartItem> cartItems = cartMapper.selectList(
+                new LambdaQueryWrapper<CartItem>().eq(CartItem::getUserId, userId));
+        if (cartItems.isEmpty()) throw new BusinessException(400, "购物车为空");
+
         String orderNo = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
                 + UUID.randomUUID().toString().substring(0, 8);
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        List<OrderItem> orderItems = new ArrayList<>();
 
-        for (CartItem cartItem : cartItems) {
-            Product product = productRepository.findById(cartItem.getProductId());
-            if (product == null || product.getStatus() != Constants.ProductStatus.ON_SALE) {
-                throw new BusinessException(400, "商品 [" + cartItem.getProductName() + "] 已下架");
-            }
-            if (product.getStock() < cartItem.getQuantity()) {
-                throw new BusinessException(400,
-                        "商品 [" + product.getName() + "] 库存不足，当前库存: " + product.getStock());
-            }
-
-            OrderItem orderItem = new OrderItem();
-            orderItem.setProductId(product.getId());
-            orderItem.setProductName(product.getName());
-            orderItem.setProductPrice(product.getPrice());
-            orderItem.setQuantity(cartItem.getQuantity());
-            orderItem.setTotalPrice(product.getPrice().multiply(BigDecimal.valueOf(cartItem.getQuantity())));
-            orderItems.add(orderItem);
-
-            totalAmount = totalAmount.add(orderItem.getTotalPrice());
-        }
+        BigDecimal total = BigDecimal.ZERO;
         Order order = new Order();
         order.setOrderNo(orderNo);
         order.setUserId(userId);
-        order.setTotalAmount(totalAmount);
-        order.setStatus(Constants.OrderStatus.PENDING);
+        order.setStatus(0);
         order.setReceiverName(request.getReceiverName());
         order.setReceiverPhone(request.getReceiverPhone());
         order.setReceiverAddress(request.getReceiverAddress());
+        order.setTotalAmount(BigDecimal.ZERO);
+        orderMapper.insert(order);
 
-        orderRepository.insertOrder(order);
-        log.info("创建订单: orderNo={}, userId={}, amount={}", orderNo, userId, totalAmount);
-        for (OrderItem item : orderItems) {
-            item.setOrderId(order.getId());
+        for (CartItem ci : cartItems) {
+            Product p = productMapper.selectById(ci.getProductId());
+            if (p == null || p.getStock() < ci.getQuantity()) {
+                throw new BusinessException(400, "商品 [" + (p != null ? p.getName() : ci.getProductId()) + "] 库存不足");
+            }
+            OrderItem oi = new OrderItem();
+            oi.setOrderId(order.getId());
+            oi.setProductId(p.getId());
+            oi.setProductName(p.getName());
+            oi.setProductPrice(p.getPrice());
+            oi.setQuantity(ci.getQuantity());
+            BigDecimal sub = p.getPrice().multiply(BigDecimal.valueOf(ci.getQuantity()));
+            oi.setTotalPrice(sub);
+            total = total.add(sub);
+            orderItemMapper.insert(oi);
+
+            p.setStock(p.getStock() - ci.getQuantity());
+            productMapper.updateById(p);
         }
-        orderRepository.insertOrderItems(orderItems);
-        for (OrderItem item : orderItems) {
-            Product product = productRepository.findById(item.getProductId());
-            int newStock = product.getStock() - item.getQuantity();
-            productRepository.updateStock(product.getId(), newStock);
-            log.debug("扣减库存: productId={}, {} -> {}", product.getId(), product.getStock(), newStock);
-        }
-        cartRepository.deleteByUserId(userId);
-        return toOrderVO(order, orderItems);
+
+        order.setTotalAmount(total);
+        orderMapper.updateById(order);
+        cartMapper.delete(new LambdaQueryWrapper<CartItem>().eq(CartItem::getUserId, userId));
+        log.info("订单创建: orderNo={}, amount={}", orderNo, total);
+        return toVO(order, orderItemMapper.selectList(
+                new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, order.getId())));
     }
 
     @Override
-    public List<OrderVO> listOrders(Long userId, int page, int size) {
-        int offset = page * size;
-        int limit = Math.min(size, 50);
-        List<Order> orders = orderRepository.findByUserId(userId, offset, limit);
-        List<OrderVO> result = new ArrayList<>();
-        for (Order order : orders) {
-            result.add(toOrderVO(order, null));
-        }
-        return result;
-    }
-
-    @Override
-    public int countOrders(Long userId) {
-        return orderRepository.countByUserId(userId);
+    public IPage<OrderVO> listOrders(Long userId, int page, int size) {
+        IPage<Order> p = orderMapper.selectPage(new Page<>(page + 1, size),
+                new LambdaQueryWrapper<Order>().eq(Order::getUserId, userId)
+                        .orderByDesc(Order::getCreateTime));
+        return p.convert(o -> toVO(o, null));
     }
 
     @Override
     public OrderVO getOrderDetail(Long orderId) {
-        Order order = orderRepository.findById(orderId);
-        if (order == null) {
-            throw new BusinessException(404, "订单不存在");
-        }
-        List<OrderItem> items = orderRepository.findItemsByOrderId(orderId);
-        return toOrderVO(order, items);
+        Order o = orderMapper.selectById(orderId);
+        if (o == null) throw new BusinessException(404, "订单不存在");
+        List<OrderItem> items = orderItemMapper.selectList(
+                new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, orderId));
+        return toVO(o, items);
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional
     public void cancelOrder(Long userId, Long orderId) {
-        Order order = orderRepository.findById(orderId);
-        if (order == null) {
-            throw new BusinessException(404, "订单不存在");
-        }
-        if (!order.getUserId().equals(userId)) {
-            throw new BusinessException(403, "无权操作此订单");
-        }
-        if (order.getStatus() != Constants.OrderStatus.PENDING) {
-            throw new BusinessException(400, "只能取消待支付状态的订单");
-        }
-
-        orderRepository.updateStatus(orderId, Constants.OrderStatus.CANCELLED);
-        List<OrderItem> items = orderRepository.findItemsByOrderId(orderId);
-        for (OrderItem item : items) {
-            Product product = productRepository.findById(item.getProductId());
-            if (product != null) {
-                int newStock = product.getStock() + item.getQuantity();
-                productRepository.updateStock(product.getId(), newStock);
+        Order o = orderMapper.selectById(orderId);
+        if (o == null) throw new BusinessException(404, "订单不存在");
+        if (!o.getUserId().equals(userId)) throw new BusinessException(403, "无权操作");
+        if (o.getStatus() != 0) throw new BusinessException(400, "只能取消待支付订单");
+        o.setStatus(2);
+        orderMapper.updateById(o);
+        List<OrderItem> items = orderItemMapper.selectList(
+                new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, orderId));
+        for (OrderItem oi : items) {
+            Product p = productMapper.selectById(oi.getProductId());
+            if (p != null) {
+                p.setStock(p.getStock() + oi.getQuantity());
+                productMapper.updateById(p);
             }
         }
-
-        log.info("取消订单: orderNo={}", order.getOrderNo());
+        log.info("订单取消: orderId={}", orderId);
     }
 
-    private OrderVO toOrderVO(Order order, List<OrderItem> items) {
+    private OrderVO toVO(Order o, List<OrderItem> items) {
         OrderVO vo = new OrderVO();
-        vo.setId(order.getId());
-        vo.setOrderNo(order.getOrderNo());
-        vo.setUserId(order.getUserId());
-        vo.setTotalAmount(order.getTotalAmount());
-        vo.setStatus(order.getStatus());
-        vo.setReceiverName(order.getReceiverName());
-        vo.setReceiverPhone(order.getReceiverPhone());
-        vo.setReceiverAddress(order.getReceiverAddress());
-        vo.setCreateTime(order.getCreateTime());
-        vo.setUpdateTime(order.getUpdateTime());
+        vo.setId(o.getId());
+        vo.setOrderNo(o.getOrderNo());
+        vo.setUserId(o.getUserId());
+        vo.setTotalAmount(o.getTotalAmount());
+        vo.setStatus(o.getStatus());
+        vo.setReceiverName(o.getReceiverName());
+        vo.setReceiverPhone(o.getReceiverPhone());
+        vo.setReceiverAddress(o.getReceiverAddress());
+        vo.setCreateTime(o.getCreateTime());
+        vo.setUpdateTime(o.getUpdateTime());
 
         if (items != null) {
-            List<OrderVO.OrderItemVO> itemVOs = new ArrayList<>();
-            for (OrderItem item : items) {
-                OrderVO.OrderItemVO itemVO = new OrderVO.OrderItemVO();
-                itemVO.setId(item.getId());
-                itemVO.setProductId(item.getProductId());
-                itemVO.setProductName(item.getProductName());
-                itemVO.setProductPrice(item.getProductPrice());
-                itemVO.setQuantity(item.getQuantity());
-                itemVO.setTotalPrice(item.getTotalPrice());
-                itemVOs.add(itemVO);
-            }
-            vo.setItems(itemVOs);
+            vo.setItems(items.stream().map(oi -> {
+                OrderVO.OrderItemVO iv = new OrderVO.OrderItemVO();
+                iv.setId(oi.getId());
+                iv.setProductId(oi.getProductId());
+                iv.setProductName(oi.getProductName());
+                iv.setProductPrice(oi.getProductPrice());
+                iv.setQuantity(oi.getQuantity());
+                iv.setTotalPrice(oi.getTotalPrice());
+                return iv;
+            }).collect(Collectors.toList()));
         }
-
         return vo;
     }
 }

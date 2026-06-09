@@ -1,12 +1,12 @@
 package com.ecommerce.service.impl;
 
-import com.ecommerce.common.Constants;
-import com.ecommerce.domain.Product;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.ecommerce.entity.Product;
 import com.ecommerce.exception.BusinessException;
-import com.ecommerce.repository.ProductRepository;
+import com.ecommerce.mapper.ProductMapper;
 import com.ecommerce.service.ProductService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -14,41 +14,35 @@ import java.util.List;
 @Service
 public class ProductServiceImpl implements ProductService {
 
-    private static final Logger log = LoggerFactory.getLogger(ProductServiceImpl.class);
+    private final ProductMapper productMapper;
 
-    private final ProductRepository productRepository;
-
-    public ProductServiceImpl(ProductRepository productRepository) {
-        this.productRepository = productRepository;
+    public ProductServiceImpl(ProductMapper productMapper) {
+        this.productMapper = productMapper;
     }
 
     @Override
     public Product findById(Long id) {
-        Product product = productRepository.findById(id);
-        if (product == null) {
-            throw new BusinessException(404, "商品不存在");
-        }
-        if (product.getStatus() != Constants.ProductStatus.ON_SALE) {
-            throw new BusinessException(400, "商品已下架");
-        }
-        return product;
+        Product p = productMapper.selectById(id);
+        if (p == null) throw new BusinessException(404, "商品不存在");
+        return p;
     }
 
     @Override
-    public List<Product> search(String keyword, int page, int size) {
-        int offset = page * size;
-        int limit = Math.min(size, 100); // 限制每页最大 100 条
-        log.debug("搜索商品: keyword={}, page={}, size={}", keyword, page, size);
-        return productRepository.search(keyword, offset, limit);
-    }
-
-    @Override
-    public int countSearch(String keyword) {
-        return productRepository.countSearch(keyword);
+    public IPage<Product> search(String keyword, int page, int size) {
+        LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+        w.eq(Product::getStatus, 1);
+        if (keyword != null && !keyword.isEmpty()) {
+            w.like(Product::getName, keyword);
+        }
+        w.orderByDesc(Product::getCreateTime);
+        return productMapper.selectPage(new Page<>(page + 1, size), w);
     }
 
     @Override
     public List<Product> findByCategory(Long categoryId) {
-        return productRepository.findByCategoryId(categoryId);
+        return productMapper.selectList(
+                new LambdaQueryWrapper<Product>()
+                        .eq(Product::getCategoryId, categoryId)
+                        .eq(Product::getStatus, 1));
     }
 }
