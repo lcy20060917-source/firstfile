@@ -6,47 +6,40 @@
       <div class="spinner-border text-primary"></div>
     </div>
 
-    <div v-else-if="cart.items && cart.items.length > 0">
+    <div v-else-if="!cartStore.isEmpty">
       <div class="row">
-        <!-- 收货信息 -->
         <div class="col-md-8">
           <div class="card mb-4">
             <div class="card-header"><h5 class="mb-0">收货信息</h5></div>
             <div class="card-body">
               <div class="form-group">
                 <label>收货人 <span class="text-danger">*</span></label>
-                <input v-model="form.receiverName" class="form-control" placeholder="请输入收货人姓名" required />
+                <input v-model="form.receiverName" class="form-control" required />
               </div>
               <div class="form-group">
                 <label>联系电话 <span class="text-danger">*</span></label>
-                <input v-model="form.receiverPhone" class="form-control" placeholder="请输入联系电话" required />
+                <input v-model="form.receiverPhone" class="form-control" required />
               </div>
               <div class="form-group">
                 <label>收货地址 <span class="text-danger">*</span></label>
-                <textarea v-model="form.receiverAddress" class="form-control" rows="3" placeholder="请输入详细收货地址" required />
+                <textarea v-model="form.receiverAddress" class="form-control" rows="3" required />
               </div>
             </div>
           </div>
 
-          <!-- 商品清单 -->
           <div class="card mb-4">
             <div class="card-header"><h5 class="mb-0">商品清单</h5></div>
             <div class="card-body p-0">
               <table class="table mb-0">
                 <thead class="thead-light">
-                  <tr>
-                    <th>商品</th>
-                    <th>单价</th>
-                    <th>数量</th>
-                    <th>小计</th>
-                  </tr>
+                  <tr><th>商品</th><th>单价</th><th>数量</th><th>小计</th></tr>
                 </thead>
                 <tbody>
-                  <tr v-for="item in cart.items" :key="item.id">
+                  <tr v-for="item in cartStore.items" :key="item.productId">
                     <td>{{ item.productName }}</td>
-                    <td>¥{{ item.productPrice }}</td>
+                    <td>&yen;{{ item.productPrice }}</td>
                     <td>{{ item.quantity }}</td>
-                    <td>¥{{ item.subtotal }}</td>
+                    <td>&yen;{{ (item.productPrice * item.quantity).toFixed(2) }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -54,26 +47,22 @@
           </div>
         </div>
 
-        <!-- 订单汇总 -->
         <div class="col-md-4">
           <div class="card">
             <div class="card-header"><h5 class="mb-0">订单汇总</h5></div>
             <div class="card-body">
               <div class="d-flex justify-content-between mb-2">
-                <span>商品总数</span>
-                <span>{{ cart.totalCount }} 件</span>
+                <span>商品总数</span><span>{{ cartStore.totalCount }} 件</span>
               </div>
               <div class="d-flex justify-content-between mb-2">
-                <span>商品金额</span>
-                <span>¥{{ cart.totalAmount }}</span>
+                <span>商品金额</span><span>&yen;{{ cartStore.totalAmount.toFixed(2) }}</span>
               </div>
               <hr />
               <div class="d-flex justify-content-between mb-3">
                 <strong>应付总额</strong>
-                <strong class="text-danger" style="font-size: 1.3rem;">¥{{ cart.totalAmount }}</strong>
+                <strong class="text-danger" style="font-size: 1.3rem;">&yen;{{ cartStore.totalAmount.toFixed(2) }}</strong>
               </div>
               <button class="btn btn-danger btn-block btn-lg" :disabled="submitting" @click="handleSubmit">
-                <span v-if="submitting" class="spinner-border spinner-border-sm mr-2"></span>
                 {{ submitting ? '提交中...' : '提交订单' }}
               </button>
             </div>
@@ -98,7 +87,6 @@ import { createOrder } from '../api/order'
 
 const router = useRouter()
 const cartStore = useCartStore()
-const cart = ref({ items: [], totalAmount: 0, totalCount: 0 })
 const loading = ref(true)
 const submitting = ref(false)
 const form = reactive({ receiverName: '', receiverPhone: '', receiverAddress: '' })
@@ -106,7 +94,7 @@ const form = reactive({ receiverName: '', receiverPhone: '', receiverAddress: ''
 async function fetchCart() {
   try {
     const res = await getCart()
-    cart.value = res.data
+    cartStore.setFromServer(res.data)
   } catch (e) {
     console.error('加载购物车失败:', e)
   } finally {
@@ -122,9 +110,14 @@ async function handleSubmit() {
   submitting.value = true
   try {
     const res = await createOrder(form)
-    cartStore.setCount(0)
-    alert('下单成功！订单号: ' + res.data.orderNo)
-    router.push({ name: 'OrderDetail', params: { id: res.data.id } })
+    const order = res.data
+    cartStore.clear()
+    // 下单成功后跳转到成功页面
+    router.push({
+      name: 'OrderSuccess',
+      params: { id: order.id },
+      query: { orderNo: order.orderNo, amount: order.totalAmount }
+    })
   } catch (e) {
     alert('下单失败: ' + e.message)
   } finally {
