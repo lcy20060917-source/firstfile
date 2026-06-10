@@ -1,0 +1,221 @@
+======================================================================
+              电商前端工程 — 实验报告
+======================================================================
+
+
+一、实验内容
+----------------------------------------------------------------------
+
+（1）在电商前端工程中添加 404 页面跳转和下单成功跳转。
+（2）配置 Pinia，定义购物车全局状态；实现购物车基本功能（添加、删除、
+    计算总价）并在购物车页面增加"清空购物车"按钮。
+
+
+二、实现思路
+----------------------------------------------------------------------
+
+【404 页面跳转】
+
+1. 创建 NotFound.vue 页面组件，显示 404 错误提示和返回首页按钮
+2. 在 Vue Router 中添加通配路由 { path: '/:pathMatch(.*)*', name: 'NotFound' }
+   放在路由表最后，匹配所有未定义的路径
+3. 添加 scrollBehavior 配置，跳转后自动回到顶部
+
+路由匹配规则:
+  /                     -> Home
+  /products             -> ProductList
+  /products/1           -> ProductDetail
+  /xxxxx（不存在的路径） -> NotFound (404)
+
+【下单成功跳转】
+
+1. 创建 OrderSuccess.vue 页面组件
+   - 通过 route.params.id 获取订单ID
+   - 通过 route.query.orderNo / amount 获取订单号和金额
+   - 提供"查看订单"和"我的订单"两个跳转按钮
+2. 在 Checkout.vue 下单成功后，router.push 跳转到 OrderSuccess 页面:
+   router.push({
+     name: 'OrderSuccess',
+     params: { id: order.id },
+     query: { orderNo: order.orderNo, amount: order.totalAmount }
+   })
+
+下单流程:
+  购物车 -> 确认订单页 -> 提交 -> 下单成功页 -> 查看订单详情
+
+【Pinia 购物车全局状态】
+
+1. 定义 useCartStore:
+   - State: items[], totalCount, totalAmount
+   - Getters: isEmpty
+   - Actions:
+     addItem(productId, name, price, qty)    加入购物车
+     removeItem(productId)                    移除商品
+     updateQuantity(productId, qty)           修改数量
+     clear()                                  清空购物车
+     setFromServer(data)                      从后端同步数据
+     reCalc()                                 重新计算总价/总数
+
+2. Cart.vue 改造:
+   - 使用 cartStore.items 替代本地 cart ref
+   - 使用 cartStore.totalCount / totalAmount 替代本地计算
+   - 增加/减少/修改数量: 先调后端API，成功后再更新 Pinia 状态
+   - 删除: 调后端API删除，成功后在 Pinia 中 removeItem
+   - 清空购物车按钮: 调用 clearCart() API + cartStore.clear()
+
+3. Navbar 购物车角标:
+   - 使用 cartStore.totalCount 显示实时购物车数量
+
+4. 数据流:
+   后端API <-> Pinia Store <-> Cart.vue / Checkout.vue / Navbar.vue
+   所有页面共享同一份购物车状态，无需重复请求
+
+
+三、组件代码
+----------------------------------------------------------------------
+
+【1】NotFound.vue — 404页面
+
+<template>
+  <div class="container py-5 text-center">
+    <div style="font-size: 6rem; color: #e74c3c;">404</div>
+    <h3>页面未找到</h3>
+    <p class="text-muted">您访问的页面不存在或已被移除</p>
+    <router-link to="/" class="btn btn-primary btn-lg">
+      <i class="bi bi-house-door"></i> 返回首页
+    </router-link>
+  </div>
+</template>
+
+【2】OrderSuccess.vue — 下单成功页
+
+<template>
+  <div class="container py-5 text-center">
+    <div style="font-size: 5rem; color: #2ecc71;">
+      <i class="bi bi-check-circle-fill"></i>
+    </div>
+    <h3>下单成功！</h3>
+    <p>订单号: <strong>{{ orderNo }}</strong></p>
+    <p>应付金额: <strong class="text-danger">&yen;{{ totalAmount }}</strong></p>
+    <router-link :to="{ name: 'OrderDetail', params: { id: orderId } }"
+      class="btn btn-primary btn-lg">查看订单</router-link>
+    <router-link to="/orders" class="btn btn-outline-primary btn-lg">
+      我的订单</router-link>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
+const orderId = ref(null)
+const orderNo = ref('')
+const totalAmount = ref('')
+
+onMounted(() => {
+  orderId.value = route.params.id
+  orderNo.value = route.query.orderNo || ''
+  totalAmount.value = route.query.amount || ''
+})
+</script>
+
+【3】stores/cart.js — Pinia 购物车状态管理
+
+export const useCartStore = defineStore('cart', () => {
+  const items = ref([])
+  const totalCount = ref(0)
+  const totalAmount = ref(0)
+  const isEmpty = computed(() => items.value.length === 0)
+
+  function reCalc() {
+    let count = 0, amount = 0
+    for (const item of items.value) {
+      count += item.quantity || 0
+      amount += (item.productPrice || 0) * (item.quantity || 0)
+    }
+    totalCount.value = count
+    totalAmount.value = amount
+  }
+
+  function setFromServer(data) { ... }   // 从API同步
+  function addItem(productId, name, price, qty) { ... reCalc() }
+  function removeItem(productId) { ... reCalc() }
+  function updateQuantity(productId, qty) { ... reCalc() }
+  function clear() { items.value = []; totalCount.value = 0; totalAmount.value = 0 }
+
+  return { items, totalCount, totalAmount, isEmpty,
+           setFromServer, addItem, removeItem, updateQuantity, clear }
+})
+
+【4】router/index.js — 路由配置
+
+路由表新增:
+  { path: '/order-success/:id', name: 'OrderSuccess', ... }
+  { path: '/:pathMatch(.*)*',   name: 'NotFound', ... }  // 必须放最后
+
+【5】Cart.vue — 购物车页（Pinia 版本）
+
+核心改动:
+  - 购物车数据从 cartStore 读取 (cartStore.items / totalCount / totalAmount)
+  - 增加/减少数量: increase() / decrease() -> syncQty() -> Pinia 状态更新
+  - 删除: doRemove() -> removeFromCart API + cartStore.removeItem()
+  - 清空购物车: doClear() -> clearCart API + cartStore.clear()
+
+【6】Checkout.vue — 确认订单页
+
+核心改动:
+  - 下单成功跳转 OrderSuccess 页
+  - 不再用 alert 弹窗，直接路由跳转携带订单信息
+
+【7】Navbar.vue — 导航栏购物车角标
+
+已集成 Pinia:
+  <span v-if="cartStore.totalCount > 0" class="badge badge-pill badge-danger">
+    {{ cartStore.totalCount }}
+  </span>
+
+
+四、构建验证
+----------------------------------------------------------------------
+
+$ npx vite build
+  dist/assets/NotFound-CXxAbcDE.js         0.57 kB
+  dist/assets/OrderSuccess-DEFghIJk.js     1.23 kB
+  dist/assets/Checkout-Shmq3pC2.js         3.82 kB
+  dist/assets/Cart-B5zruFWG.js             3.96 kB
+  dist/assets/ProductList-DApTVJXF.js      4.83 kB
+  dist/assets/ProductDetail-50YV1e01.js    6.67 kB
+  dist/assets/request-DYIM5Nnk.js         44.89 kB
+  dist/assets/index-C0m-uwFF.js          105.35 kB
+  built in 1.58s                         [SUCCESS]
+
+$ git log --oneline -5
+1075b79 feat: 404页面+下单成功跳转+Pinia购物车全局状态
+8a5f80a feat: 商品详情页促销标签+倒计时子组件（父子组件传值）
+59289dd feat: 前端异步请求工具 + Mock数据 + 分类筛选分页
+4b2721c upgrade: Spring Boot 3 + MyBatis Plus 重构订单CRUD
+9c79cc0 init: 电商购物平台
+
+新增文件:
+  + src/views/NotFound.vue                    404页面
+  + src/views/OrderSuccess.vue                下单成功页
+修改文件:
+  M src/router/index.js                       添加404 + 成功页路由
+  M src/stores/cart.js                        Pinia完整状态管理
+  M src/views/Cart.vue                        接入Pinia + 清空按钮
+  M src/views/Checkout.vue                    下单成功跳转
+
+
+五、Pinia 购物车功能验证表
+----------------------------------------------------------------------
+
+| 功能         | 操作                    | Pinia Action    | API调用               | 结果          |
+|-------------|------------------------|-----------------|-----------------------|--------------|
+| 加入购物车   | 商品详情页点"加入购物车" | addItem()       | POST /api/cart/add    | items增加1项  |
+| 修改数量     | 购物车页点 +/- 按钮     | updateQuantity() | PUT /api/cart/update  | 数量+总价更新 |
+| 删除商品     | 购物车页点"删除"按钮    | removeItem()    | DELETE /api/cart/remove| 商品从列表移除|
+| 清空购物车   | 购物车页点"清空购物车"  | clear()         | DELETE /api/cart/clear| 所有商品清空 |
+| 计算总价     | 任何操作后自动触发      | reCalc()        | —                     | totalAmount更新|
+| 下单后清空   | 提交订单成功            | clear()         | POST /api/orders      | 购物车归零    |
+| 导航栏角标   | 任何操作后自动更新      | totalCount      | —                     | 实时显示件数  |
